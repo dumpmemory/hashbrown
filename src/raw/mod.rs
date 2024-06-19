@@ -483,7 +483,7 @@ impl<T> Bucket<T> {
     /// use core::hash::{BuildHasher, Hash};
     /// use hashbrown::raw::{Bucket, RawTable};
     ///
-    /// type NewHashBuilder = core::hash::BuildHasherDefault<ahash::AHasher>;
+    /// type NewHashBuilder = hashbrown::DefaultHashBuilder;
     ///
     /// fn make_hash<K: Hash + ?Sized, S: BuildHasher>(hash_builder: &S, key: &K) -> u64 {
     ///     use core::hash::Hasher;
@@ -649,7 +649,7 @@ impl<T> Bucket<T> {
     /// use core::hash::{BuildHasher, Hash};
     /// use hashbrown::raw::{Bucket, RawTable};
     ///
-    /// type NewHashBuilder = core::hash::BuildHasherDefault<ahash::AHasher>;
+    /// type NewHashBuilder = hashbrown::DefaultHashBuilder;
     ///
     /// fn make_hash<K: Hash + ?Sized, S: BuildHasher>(hash_builder: &S, key: &K) -> u64 {
     ///     use core::hash::Hasher;
@@ -708,7 +708,7 @@ impl<T> Bucket<T> {
     /// use core::hash::{BuildHasher, Hash};
     /// use hashbrown::raw::{Bucket, RawTable};
     ///
-    /// type NewHashBuilder = core::hash::BuildHasherDefault<ahash::AHasher>;
+    /// type NewHashBuilder = hashbrown::DefaultHashBuilder;
     ///
     /// fn make_hash<K: Hash + ?Sized, S: BuildHasher>(hash_builder: &S, key: &K) -> u64 {
     ///     use core::hash::Hasher;
@@ -1235,7 +1235,7 @@ impl<T, A: Allocator> RawTable<T, A> {
                 fallibility,
                 Self::TABLE_LAYOUT,
                 if T::NEEDS_DROP {
-                    Some(mem::transmute(ptr::drop_in_place::<T> as unsafe fn(*mut T)))
+                    Some(|ptr| ptr::drop_in_place(ptr as *mut T))
                 } else {
                     None
                 },
@@ -2911,7 +2911,7 @@ impl RawTableInner {
         hasher: &dyn Fn(&mut Self, usize) -> u64,
         fallibility: Fallibility,
         layout: TableLayout,
-        drop: Option<fn(*mut u8)>,
+        drop: Option<unsafe fn(*mut u8)>,
     ) -> Result<(), TryReserveError>
     where
         A: Allocator,
@@ -3145,7 +3145,7 @@ impl RawTableInner {
         &mut self,
         hasher: &dyn Fn(&mut Self, usize) -> u64,
         size_of: usize,
-        drop: Option<fn(*mut u8)>,
+        drop: Option<unsafe fn(*mut u8)>,
     ) {
         // If the hash function panics then properly clean up any elements
         // that we haven't rehashed yet. We unfortunately can't preserve the
@@ -4439,11 +4439,13 @@ impl<T, A: Allocator> FusedIterator for RawDrain<'_, T, A> {}
 ///   created will be yielded by that iterator.
 /// - The order in which the iterator yields buckets is unspecified and may
 ///   change in the future.
+#[cfg(feature = "raw")]
 pub struct RawIterHash<T> {
     inner: RawIterHashInner,
     _marker: PhantomData<T>,
 }
 
+#[cfg(feature = "raw")]
 struct RawIterHashInner {
     // See `RawTableInner`'s corresponding fields for details.
     // We can't store a `*const RawTableInner` as it would get
@@ -4463,9 +4465,9 @@ struct RawIterHashInner {
     bitmask: BitMaskIter,
 }
 
+#[cfg(feature = "raw")]
 impl<T> RawIterHash<T> {
     #[cfg_attr(feature = "inline-more", inline)]
-    #[cfg(feature = "raw")]
     unsafe fn new<A: Allocator>(table: &RawTable<T, A>, hash: u64) -> Self {
         RawIterHash {
             inner: RawIterHashInner::new(&table.table, hash),
@@ -4473,9 +4475,10 @@ impl<T> RawIterHash<T> {
         }
     }
 }
+
+#[cfg(feature = "raw")]
 impl RawIterHashInner {
     #[cfg_attr(feature = "inline-more", inline)]
-    #[cfg(feature = "raw")]
     unsafe fn new(table: &RawTableInner, hash: u64) -> Self {
         let h2_hash = h2(hash);
         let probe_seq = table.probe_seq(hash);
@@ -4493,6 +4496,7 @@ impl RawIterHashInner {
     }
 }
 
+#[cfg(feature = "raw")]
 impl<T> Iterator for RawIterHash<T> {
     type Item = Bucket<T>;
 
@@ -4512,6 +4516,7 @@ impl<T> Iterator for RawIterHash<T> {
     }
 }
 
+#[cfg(feature = "raw")]
 impl Iterator for RawIterHashInner {
     type Item = usize;
 
@@ -4572,7 +4577,7 @@ mod test_map {
                 &|table, index| hasher(table.bucket::<T>(index).as_ref()),
                 mem::size_of::<T>(),
                 if mem::needs_drop::<T>() {
-                    Some(mem::transmute(ptr::drop_in_place::<T> as unsafe fn(*mut T)))
+                    Some(|ptr| ptr::drop_in_place(ptr as *mut T))
                 } else {
                     None
                 },
